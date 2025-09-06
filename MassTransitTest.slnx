@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="IntegrationTests/IntegrationTests.csproj" />
+  <Project Path="MassTransitTest.Listener/MassTransitTest.Listener.csproj" />
+</Solution>

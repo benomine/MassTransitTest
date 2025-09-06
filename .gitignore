@@ -1,0 +1,60 @@
+﻿# User-specific files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+build/
+bld/
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+msbuild.log
+msbuild.err
+msbuild.wrn
+
+# Visual Studio files
+vs/
+vscode/
+!.vscode/settings.json
+
+# Rider files
+idea/
+
+# NuGet Packages
+*.nupkg
+**/packages/*
+!**/packages/build/
+
+# ASP.NET Scaffolding
+ScaffoldingReadMe.txt
+
+# Node.js dependencies
+node_modules/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.cache
+*.pidb
+*.tlog
+
+# Azure-related files
+*.azurePubxml
+PublishScripts/
+csx/
+ecf/
+rcf/
+
+# Miscellaneous
+*.dbmdl
+*.pfx
+*.publishsettings
+*.snk
