@@ -8,10 +8,17 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <PackageReference Include="Aspire.Confluent.Kafka" Version="9.4.2" />
+        <PackageReference Include="Aspire.Npgsql" Version="9.4.2" />
+        <PackageReference Include="Aspire.Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.4.2" />
         <PackageReference Include="MassTransit.EntityFrameworkCore" Version="8.5.2" />
         <PackageReference Include="MassTransit.Kafka" Version="8.5.2" />
-        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.6"/>
+        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.6" />
         <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\ServiceDefaults\ServiceDefaults.csproj" />
     </ItemGroup>
 
 </Project>

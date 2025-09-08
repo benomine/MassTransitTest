@@ -1,4 +1,5 @@
-﻿using MassTransit;
+﻿using System.Security.Cryptography;
+using MassTransit;
 using MassTransitTest.ApiService.Messages;
 
 namespace MassTransitTest.ApiService.StateMachines;
@@ -7,58 +8,76 @@ public sealed class MessageStateMachine : MassTransitStateMachine<MessageState>
 {
     private readonly ILogger<MessageStateMachine> _logger;
 
-    public State Received { get; private set; }
-    public State Processing { get; private set; }
-    public State Completed { get; private set; }
-    public State Failed { get; private set; }
+    // ReSharper disable UnassignedGetOnlyAutoProperty
+    public State Completed { get; }
+    public State Failed { get; }
 
-    public Event<MessageReceived> ReceivedEvent { get; private set; }
-    public Event<ProcessingCompletedMessage> ProcessingCompleted { get; private set; }
-    public Event<ProcessingFailedMessage> ProcessingFailed { get; private set; }
+    public Event<KafkaInbound> ReceivedEvent { get; }
 
     public MessageStateMachine(ILogger<MessageStateMachine> logger)
     {
         _logger = logger;
 
-        InstanceState(x => x.CurrentState, Received, Processing, Completed, Failed);
+        InstanceState(x => x.CurrentState);
 
         Event(() => ReceivedEvent, x =>
         {
-            x.CorrelateById(m => m.Message.CorrelationId);
+            x.CorrelateById(m => ComputeCorrelationId(m.Message.SomeId));
             x.InsertOnInitial = true;
         });
-        Event(() => ProcessingCompleted, x => x.CorrelateById(m => m.Message.CorrelationId));
-        Event(() => ProcessingFailed, x => x.CorrelateById(m => m.Message.CorrelationId));
 
         Initially(
             When(ReceivedEvent)
                 .Then(ctx =>
                 {
-                    _logger.LogInformation("Received Message {CorrelationId}", ctx.Message.CorrelationId);
-                    ctx.Saga.CorrelationId = ctx.Message.CorrelationId;
+                    ctx.Saga.CorrelationId = ComputeCorrelationId(ctx.Message.SomeId);
+                    _logger.LogInformation("Received Message {CorrelationId}", ctx.Saga.CorrelationId);
                     ctx.Saga.Data = ctx.Message.Data;
                 })
-                .Publish(ctx => ctx.Init<MessageProcessing>(new { ctx.Saga.CorrelationId, ctx.Saga.Data }))
-                .TransitionTo(Processing)
-        );
-
-        During(Processing,
-            When(ProcessingCompleted)
-                .Then(context =>
-                {
-                    _logger.LogInformation("Processing Completed {CorrelationId}", context.Message.CorrelationId);
-                })
-                .TransitionTo(Completed)
-                .Finalize(),
-            When(ProcessingFailed)
-                .Then(ctx =>
-                {
-                    _logger.LogWarning("Processing Failed {CorrelationId}", ctx.Message.CorrelationId);
-                    ctx.Saga.Error = ctx.Message.Error;
-                })
-                .TransitionTo(Failed)
+                .Then(ProcessMessage)
+                .IfElse(ctx => ctx.Saga.Error is null,
+                    binder => binder.TransitionTo(Completed).Finalize(),
+                    binder => binder.TransitionTo(Failed))
         );
 
         SetCompletedWhenFinalized();
+    }
+
+    private Guid ComputeCorrelationId(string id)
+    {
+        var hash = MD5.HashData(System.Text.Encoding.UTF8.GetBytes(id));
+        return new Guid(hash);
+    }
+
+    private void ProcessMessage(BehaviorContext<MessageState, KafkaInbound> context)
+    {
+        try
+        {
+            _logger.LogInformation("Traitement {CorrelationId}", context.Saga.CorrelationId);
+
+            if (string.IsNullOrWhiteSpace(context.Message.Data))
+                throw new InvalidOperationException("Données invalides");
+
+        }
+        catch (Exception ex)
+        {
+            context.Saga.Error = ex.Message;
+        }
+    }
+
+    private async Task ProcessMessageAsync(BehaviorContext<MessageState, KafkaInbound> context)
+    {
+        try
+        {
+            _logger.LogInformation("Traitement {CorrelationId}", context.Saga.CorrelationId);
+
+            if (string.IsNullOrWhiteSpace(context.Message.Data))
+                throw new InvalidOperationException("Données invalides");
+
+        }
+        catch (Exception ex)
+        {
+            context.Saga.Error = ex.Message;
+        }
     }
 }

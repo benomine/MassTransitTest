@@ -1,9 +1,9 @@
-﻿using System.Text.Json;
+﻿using System.Security.Cryptography;
+using System.Text.Json;
 using Confluent.Kafka;
 using MassTransit;
 using MassTransit.EntityFrameworkCoreIntegration;
 using MassTransit.Testing;
-using MassTransitTest.ApiService.Consumers;
 using MassTransitTest.ApiService.Data;
 using MassTransitTest.ApiService.Messages;
 using MassTransitTest.ApiService.StateMachines;
@@ -23,25 +23,22 @@ public sealed class StateMachineKafkaIntegrationTests
         var services = new ServiceCollection();
 
         services.AddDbContext<MessageDbContext>(opt => opt.UseNpgsql(_fx.ConnectionString));
-        services.AddSingleton<ILoggerProvider>(_ => new XUnitLoggerProvider(TestContext.Current.TestOutputHelper));
+        services.AddSingleton<ILoggerProvider>(_ => new XUnitLoggerProvider(TestContext.Current.TestOutputHelper!));
         services.AddLogging();
         services.AddMassTransitTestHarness(cfg =>
         {
-            cfg.AddConsumer<MessageProcessingConsumer>();
-            cfg.AddConsumer<InitialConsumer>();
             cfg.UsingInMemory((context, bus) => bus.ConfigureEndpoints(context));
 
-            cfg.AddSagaStateMachine<MessageStateMachine, MessageState>()
-                .EntityFrameworkRepository(r =>
-                {
-                    r.ConcurrencyMode = ConcurrencyMode.Pessimistic;
-                    r.ExistingDbContext<MessageDbContext>();
-                    r.LockStatementProvider = new PostgresLockStatementProvider();
-                });
             cfg.AddRider(rider =>
             {
-                rider.AddConsumer<InitialConsumer>();
-
+                rider.AddSagaStateMachine<MessageStateMachine, MessageState>()
+                    .EntityFrameworkRepository(r =>
+                    {
+                        r.ConcurrencyMode = ConcurrencyMode.Pessimistic;
+                        r.ExistingDbContext<MessageDbContext>();
+                        r.LockStatementProvider = new PostgresLockStatementProvider();
+                    });
+                
                 rider.UsingKafka((context, k) =>
                 {
                     k.Host(_fx.BootstrapServers);
@@ -49,12 +46,34 @@ public sealed class StateMachineKafkaIntegrationTests
                     k.TopicEndpoint<KafkaInbound>(
                         IntegrationTestFixture.TopicName,
                         IntegrationTestFixture.GroupId,
-                        e => { e.ConfigureConsumer<InitialConsumer>(context); });
+                        e =>
+                        {
+                            e.AutoStart = true;
+                            e.AutoOffsetReset = AutoOffsetReset.Earliest;
+                            e.ConfigureSaga<MessageState>(context);
+                        });
                 });
             });
         });
 
         return services.BuildServiceProvider(validateScopes: true);
+    }
+
+    private char[] _chars =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".ToCharArray();
+
+    private string GenerateId()
+    {
+        var data = new byte[64];
+        using var crypto = RandomNumberGenerator.Create();
+        crypto.GetBytes(data);
+        var result = new char[64];
+        for (var i = 0; i < result.Length; i++)
+        {
+            var idx = data[i] % _chars.Length;
+            result[i] = _chars[idx];
+        }
+        return new string(result);
     }
 
     [Fact]
@@ -70,16 +89,18 @@ public sealed class StateMachineKafkaIntegrationTests
         };
         var producer = new ProducerBuilder<string, string>(producerConfig).Build();
 
-        var correlationId = Guid.NewGuid();
+        var id = GenerateId();
 
         await producer.ProduceAsync("it-messages",
             new Message<string, string>
-                { Value = JsonSerializer.Serialize(new KafkaInbound { CorrelationId = correlationId, Data = "ok" }) },
+                { Value = JsonSerializer.Serialize(new KafkaInbound { SomeId = id, Data = "ok" }) },
             TestContext.Current.CancellationToken);
 
+        await harness.Consumed.Any<KafkaInbound>(TestContext.Current.CancellationToken);
+        
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MessageDbContext>();
-        var saga = await db.MessageStates.FirstOrDefaultAsync(x => x.CorrelationId.Equals(correlationId),
+        var saga = await db.MessageStates.FirstOrDefaultAsync(x => x.CorrelationId.Equals(id),
             TestContext.Current.CancellationToken);
         Assert.Null(saga);
     }
@@ -97,19 +118,15 @@ public sealed class StateMachineKafkaIntegrationTests
         };
         var producer = new ProducerBuilder<string, string>(producerConfig).Build();
 
-        var correlationId = Guid.NewGuid();
+        var id = GenerateId();
 
         await producer.ProduceAsync("it-messages",
             new Message<string, string>
-                { Value = JsonSerializer.Serialize(new KafkaInbound { CorrelationId = correlationId, Data = "ok" }) },
+                { Value = JsonSerializer.Serialize(new KafkaInbound { SomeId = id, Data = "" }) },
             TestContext.Current.CancellationToken);
-
-        await Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
-
-        var sagaHarness = harness.GetSagaStateMachineHarness<MessageStateMachine, MessageState>();
-
-        Assert.True(await sagaHarness.Consumed.Any<MessageReceived>(TestContext.Current.CancellationToken)); 
         
+        await harness.Consumed.Any<KafkaInbound>(TestContext.Current.CancellationToken);
+
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MessageDbContext>();
         var saga = await db.MessageStates.FirstOrDefaultAsync(cancellationToken: TestContext.Current.CancellationToken);

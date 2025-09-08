@@ -37,7 +37,8 @@ public sealed class IntegrationTestFixture : IAsyncLifetime
                     correlationid uuid PRIMARY KEY,
                     currentstate integer NOT NULL,
                     data text NULL,
-                    error text NULL
+                    error text NULL,
+                    version int NOT NULL
                   );";
             await cmd.ExecuteNonQueryAsync();
         }

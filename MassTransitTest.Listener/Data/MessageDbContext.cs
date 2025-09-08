@@ -34,5 +34,6 @@ public class MessageStateMap : SagaClassMap<MessageState>
         entity.Property(x => x.CurrentState).HasColumnName("currentstate").IsRequired();
         entity.Property(x => x.Data).HasColumnName("data");
         entity.Property(x => x.Error).HasColumnName("error");
+        entity.Property(x => x.Version).HasColumnName("version");
     }
 }

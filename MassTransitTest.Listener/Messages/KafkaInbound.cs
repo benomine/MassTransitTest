@@ -2,6 +2,6 @@
 
 public record KafkaInbound
 {
-    public Guid CorrelationId { get; init; }
+    public string SomeId { get; init; }
     public string Data { get; init; } = string.Empty;
 }

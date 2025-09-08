@@ -1,4 +1,6 @@
 <Solution>
   <Project Path="IntegrationTests/IntegrationTests.csproj" />
+  <Project Path="KafkaAppHost/KafkaAppHost.csproj" Id="40e7eb9a-1ca5-49d5-8f80-9d1b3c7dfae1" />
   <Project Path="MassTransitTest.Listener/MassTransitTest.Listener.csproj" />
+  <Project Path="ServiceDefaults/ServiceDefaults.csproj" Id="1d4604c4-6179-4b44-b004-03adad9784f9" />
 </Solution>
