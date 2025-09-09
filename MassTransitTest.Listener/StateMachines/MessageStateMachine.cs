@@ -10,10 +10,11 @@ public sealed class MessageStateMachine : MassTransitStateMachine<MessageState>
 
     // ReSharper disable UnassignedGetOnlyAutoProperty
     public State Completed { get; }
-    public State Failed { get; }
 
     public Event<KafkaInbound> ReceivedEvent { get; }
-
+    public Event FailedEvent { get; }
+    public Event CompletedEvent { get; }
+    
     public MessageStateMachine(ILogger<MessageStateMachine> logger)
     {
         _logger = logger;
@@ -25,7 +26,7 @@ public sealed class MessageStateMachine : MassTransitStateMachine<MessageState>
             x.CorrelateById(m => ComputeCorrelationId(m.Message.SomeId));
             x.InsertOnInitial = true;
         });
-
+        
         Initially(
             When(ReceivedEvent)
                 .Then(ctx =>
@@ -34,16 +35,30 @@ public sealed class MessageStateMachine : MassTransitStateMachine<MessageState>
                     _logger.LogInformation("Received Message {CorrelationId}", ctx.Saga.CorrelationId);
                     ctx.Saga.Data = ctx.Message.Data;
                 })
-                .Then(ProcessMessage)
-                .IfElse(ctx => ctx.Saga.Error is null,
-                    binder => binder.TransitionTo(Completed).Finalize(),
-                    binder => binder.TransitionTo(Failed))
+                .ThenAsync(ProcessMessageAsync)
         );
-
+        
+        During(Initial,
+            When(CompletedEvent)
+                .Then(context =>
+                {
+                    _logger.LogInformation("Processing completed for {CorrelationId}", context.Saga.CorrelationId);
+                })
+                .TransitionTo(Completed)
+                .Finalize());
+        
+        During(Initial,
+            When(FailedEvent)
+                .Then(context =>
+                {
+                    _logger.LogError("Processing failed for {CorrelationId}", context.Saga.CorrelationId);
+                })
+            );
+        
         SetCompletedWhenFinalized();
     }
-
-    private Guid ComputeCorrelationId(string id)
+    
+    public static Guid ComputeCorrelationId(string id)
     {
         var hash = MD5.HashData(System.Text.Encoding.UTF8.GetBytes(id));
         return new Guid(hash);
@@ -58,10 +73,12 @@ public sealed class MessageStateMachine : MassTransitStateMachine<MessageState>
             if (string.IsNullOrWhiteSpace(context.Message.Data))
                 throw new InvalidOperationException("Données invalides");
 
+            context.Raise(CompletedEvent);
         }
         catch (Exception ex)
         {
             context.Saga.Error = ex.Message;
+            context.Raise(FailedEvent);
         }
     }
 
@@ -70,14 +87,17 @@ public sealed class MessageStateMachine : MassTransitStateMachine<MessageState>
         try
         {
             _logger.LogInformation("Traitement {CorrelationId}", context.Saga.CorrelationId);
-
+            await Task.Delay(200);
+            
             if (string.IsNullOrWhiteSpace(context.Message.Data))
                 throw new InvalidOperationException("Données invalides");
 
+            await context.Raise(CompletedEvent);
         }
         catch (Exception ex)
         {
             context.Saga.Error = ex.Message;
+            await context.Raise(FailedEvent);
         }
     }
 }

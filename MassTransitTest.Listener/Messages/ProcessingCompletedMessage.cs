@@ -1,6 +1,6 @@
 ﻿namespace MassTransitTest.ApiService.Messages;
 
-public record ProcessingCompletedMessage
+public interface ProcessingCompletedMessage
 {
-    public Guid CorrelationId { get; init; }
+    public Guid CorrelationId { get; }
 }

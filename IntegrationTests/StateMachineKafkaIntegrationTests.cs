@@ -9,6 +9,8 @@ using MassTransitTest.ApiService.Messages;
 using MassTransitTest.ApiService.StateMachines;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Npgsql;
+using Dapper;
 
 namespace IntegrationTests;
 
@@ -22,11 +24,28 @@ public sealed class StateMachineKafkaIntegrationTests
     {
         var services = new ServiceCollection();
 
-        services.AddDbContext<MessageDbContext>(opt => opt.UseNpgsql(_fx.ConnectionString));
+        services.AddNpgsqlDataSource(_fx.ConnectionString, builder =>
+        {
+            builder.EnableParameterLogging();
+            builder.EnableDynamicJson();
+        });
+        services.AddDbContext<MessageDbContext>((a, b) =>
+        {
+            var source = a.GetRequiredService<NpgsqlDataSource>();
+            b.UseNpgsql(source);
+            b.EnableDetailedErrors();
+        });
         services.AddSingleton<ILoggerProvider>(_ => new XUnitLoggerProvider(TestContext.Current.TestOutputHelper!));
         services.AddLogging();
         services.AddMassTransitTestHarness(cfg =>
         {
+            cfg.AddSagaStateMachine<MessageStateMachine, MessageState>()
+                .EntityFrameworkRepository(r =>
+                {
+                    r.ConcurrencyMode = ConcurrencyMode.Pessimistic;
+                    r.ExistingDbContext<MessageDbContext>();
+                    r.LockStatementProvider = new PostgresLockStatementProvider();
+                });
             cfg.UsingInMemory((context, bus) => bus.ConfigureEndpoints(context));
 
             cfg.AddRider(rider =>
@@ -38,7 +57,7 @@ public sealed class StateMachineKafkaIntegrationTests
                         r.ExistingDbContext<MessageDbContext>();
                         r.LockStatementProvider = new PostgresLockStatementProvider();
                     });
-                
+
                 rider.UsingKafka((context, k) =>
                 {
                     k.Host(_fx.BootstrapServers);
@@ -73,6 +92,7 @@ public sealed class StateMachineKafkaIntegrationTests
             var idx = data[i] % _chars.Length;
             result[i] = _chars[idx];
         }
+
         return new string(result);
     }
 
@@ -98,11 +118,11 @@ public sealed class StateMachineKafkaIntegrationTests
 
         await harness.Consumed.Any<KafkaInbound>(TestContext.Current.CancellationToken);
         
-        await using var scope = provider.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MessageDbContext>();
-        var saga = await db.MessageStates.FirstOrDefaultAsync(x => x.CorrelationId.Equals(id),
-            TestContext.Current.CancellationToken);
-        Assert.Null(saga);
+        var db = provider.GetRequiredService<NpgsqlDataSource>();
+        var saga = await (await db.OpenConnectionAsync(TestContext.Current.CancellationToken))
+            .QueryAsync<MessageState>("select * from message_states");
+        Assert.NotNull(saga);
+        Assert.False(saga.Any());
     }
 
     [Fact]
@@ -124,13 +144,18 @@ public sealed class StateMachineKafkaIntegrationTests
             new Message<string, string>
                 { Value = JsonSerializer.Serialize(new KafkaInbound { SomeId = id, Data = "" }) },
             TestContext.Current.CancellationToken);
-        
-        await harness.Consumed.Any<KafkaInbound>(TestContext.Current.CancellationToken);
 
-        await using var scope = provider.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MessageDbContext>();
-        var saga = await db.MessageStates.FirstOrDefaultAsync(cancellationToken: TestContext.Current.CancellationToken);
-        Assert.NotNull(saga);
-        Assert.False(string.IsNullOrEmpty(saga!.Error));
+        await harness.Consumed.Any<KafkaInbound>(TestContext.Current.CancellationToken);
+        
+        var db = provider.GetRequiredService<NpgsqlDataSource>();
+        var connection = await db.OpenConnectionAsync(TestContext.Current.CancellationToken);
+        var saga = await connection
+            .QueryAsync<MessageState>("select * from message_states");
+        
+        Assert.Single(saga);
+        
+        var first = saga.Single();
+        Assert.Equal("", first.Data);
+        Assert.Equal("Données invalides", first.Error);
     }
 }
